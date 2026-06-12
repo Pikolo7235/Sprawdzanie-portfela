@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Activity Checker - Niezawodny</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #0052FF; text-align: center; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 14px; background-color: #0052FF; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052FF; margin-top: 15px; }
+        #results { margin-top: 20px; }
+        .result-box { background: #f8f9fa; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; }
+        .status-active { color: #28a745; font-weight: bold; }
+        .status-inactive { color: #dc3545; font-weight: bold; }
+        .error-msg { color: #dc3545; background: #fff5f5; padding: 10px; border-radius: 4px; border: 1px solid #dc3545; font-size: 13px; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity Checker</h1>
+    <p class="subtitle">Weryfikacja bezpośrednia (Bez kluczy API, system awaryjny Multi-RPC)</p>
+
+    <div class="form-group">
+        <label for="walletAddress">Wklej adres portfela:</label>
+        <input type="text" id="walletAddress" placeholder="Wprowadź adres (np. 0xd8da6bf...)">
+    </div>
+
+    <button onclick="checkWalletOnBase()">Sprawdź aktywność</button>
+
+    <div id="loading">Łączenie z węzłami sieci Base...</div>
+    <div id="results"></div>
+</div>
+
+<script>
+// Lista publicznych punktów dostępu do sieci Base (jeśli jeden nie zadziała, sprawdzi kolejny)
+const RPC_ENDPOINTS = [
+    'https://mainnet.base.org',
+    'https://base.rpc.publicnode.com',
+    'https://ankr.com'
+];
+
+async function fetchFromRPC(url, method, params) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method, params, id: Math.floor(Math.random() * 1000) })
+    });
+    if (!response.ok) throw new Error(`Błąd HTTP ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message || "Błąd wewnętrzny RPC");
+    return data.result;
+}
+
+async function checkWalletOnBase() {
+    let walletAddress = document.getElementById('walletAddress').value.trim();
+    const resultsDiv = document.getElementById('results');
+    const loadingDiv = document.getElementById('loading');
+
+    resultsDiv.innerHTML = '';
+
+    // Korekta adresu (usuwanie spacji, weryfikacja długości)
+    if (!walletAddress.startsWith('0x')) {
+        walletAddress = '0x' + walletAddress;
+    }
+
+    if (walletAddress.length !== 42) {
+        resultsDiv.innerHTML = '<div class="error-msg"><strong>Błąd:</strong> Adres musi mieć dokładnie 42 znaki i zaczynać się od 0x. Sprawdź czy dobrze skopiowałaś.</div>';
+        return;
+    }
+
+    loadingDiv.style.display = 'block';
+
+    let success = false;
+    let balanceEth = 0;
+    let totalSentTransactions = 0;
+    let lastError = "";
+
+    // Pętla próbująca połączyć się z siecią przez dostępne serwery
+    for (const rpcUrl of RPC_ENDPOINTS) {
+        try {
+            console.log(`Próba połączenia z: ${rpcUrl}`);
+            
+            // Pobieranie salda i liczby transakcji w jednym bloku
+            const balanceHex = await fetchFromRPC(rpcUrl, 'eth_getBalance', [walletAddress, 'latest']);
+            const txCountHex = await fetchFromRPC(rpcUrl, 'eth_getTransactionCount', [walletAddress, 'latest']);
+
+            balanceEth = Number(BigInt(balanceHex)) / 1e18;
+            totalSentTransactions = parseInt(txCountHex, 16);
+            
+            success = true;
+            break; // Sukces, przerywamy pętlę
+        } catch (err) {
+            console.warn(`Węzeł ${rpcUrl} zawiódł:`, err.message);
+            lastError = err.message;
+        }
+    }
+
+    loadingDiv.style.display = 'none';
+
+    if (!success) {
+        resultsDiv.innerHTML = `
+            <div class="error-msg">
+                <strong>Błąd połączenia z siecią Base:</strong> Podana przeglądarka zablokowała zapytanie lokalne (CORS) lub serwery są przeciążone.<br><br>
+                <small>Szczegóły błędu: ${lastError}</small><br><br>
+                <em>Wskazówka: Jeśli uruchamiasz plik bezpośrednio z dysku, spróbuj otworzyć go w innej przeglądarce (np. Edge lub Brave zamiast Chrome) albo wyłącz na chwilę AdBlocka.</em>
+            </div>`;
+        return;
+    }
+
+    let activityStatus = '<span class="status-inactive">CAŁKOWICIE NIEAKTYWNY (Nowy portfel)</span>';
+    if (totalSentTransactions > 0) {
+        activityStatus = '<span class="status-active">AKTYWNY PORTFEL</span>';
+    }
+
+    resultsDiv.innerHTML = `
+        <div class="result-box">
+            <h3 style="margin-top:0; color:#0052FF;">Wyniki z sieci Base Mainnet:</h3>
+            <p><strong>Stan konta:</strong> ${balanceEth.toFixed(6)} ETH</p>
+            <p><strong>Wysłane transakcje (Nonce):</strong> ${totalSentTransactions}</p>
+            <p><strong>Status aktywności:</strong> ${activityStatus}</p>
+        </div>
+    `;
+}
+</script>
+
+</body>
+</html>
