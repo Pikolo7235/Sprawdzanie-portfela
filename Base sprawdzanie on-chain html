@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Activity Checker</title>
+    <!-- Ładowanie biblioteki Axios do zapytań API -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #0052FF; text-align: center; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #0052FF; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052FF; margin-top: 15px; }
+        #results { margin-top: 20px; }
+        .tx-card { background: #f8f9fa; border-left: 5px solid #ccc; padding: 12px; margin-bottom: 10px; border-radius: 0 4px 4px 0; font-size: 13px; }
+        .tx-card.wychodzaca { border-left-color: #dc3545; }
+        .tx-card.wchodzaca { border-left-color: #28a745; }
+        .tx-card.sukces { background-color: #f1fcf4; }
+        .tx-card.blad { background-color: #fff5f5; border-left-color: #ff0000; }
+        .tx-header { font-weight: bold; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .tx-details span { display: block; margin-top: 2px; word-break: break-all; }
+        .error-msg { color: #dc3545; font-weight: bold; text-align: center; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity Checker</h1>
+    <p class="subtitle">Sprawdź działania na sieci Base bez podłączania portfela</p>
+    
+    <div class="form-group">
+        <label for="apiKey">Twój klucz API Basescan:</label>
+        <input type="text" id="apiKey" placeholder="Wklej swój klucz API z basescan.org">
+    </div>
+
+    <div class="form-group">
+        <label for="walletAddress">Adres portfela:</label>
+        <input type="text" id="walletAddress" placeholder="Wklej adres portfela (0x...)">
+    </div>
+
+    <button onclick="checkActivity()">Sprawdź aktywność</button>
+
+    <div id="loading">Pobieranie danych z blockchaina Base...</div>
+    <div id="results"></div>
+</div>
+
+<script>
+async function checkActivity() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const walletAddress = document.getElementById('walletAddress').value.trim();
+    const resultsDiv = document.getElementById('results');
+    const loadingDiv = document.getElementById('loading');
+
+    // Reset widoku
+    resultsDiv.innerHTML = '';
+    
+    // Walidacja pól
+    if (!apiKey) {
+        resultsDiv.innerHTML = '<p class="error-msg">Błąd: Musisz podać swój klucz API Basescan!</p>';
+        return;
+    }
+    if (!walletAddress || !walletAddress.startsWith('0x') || walletAddress.length !== 42) {
+        resultsDiv.innerHTML = '<p class="error-msg">Błąd: Podaj poprawny adres portfela zaczynający się od 0x!</p>';
+        return;
+    }
+
+    loadingDiv.style.display = 'block';
+
+    try {
+        const response = await axios.get('https://basescan.org', {
+            params: {
+                module: 'account',
+                action: 'txlist',
+                address: walletAddress,
+                startblock: 0,
+                endblock: 99999999,
+                page: 1,
+                offset: 50, // Pobieramy maksymalnie 50 ostatnich transakcji
+                sort: 'desc',
+                apikey: apiKey
+            }
+        });
+
+        loadingDiv.style.display = 'none';
+
+        if (response.data.status !== "1") {
+            if (response.data.message === "No transactions found") {
+                resultsDiv.innerHTML = '<p style="text-align:center;">Ten portfel nie wykonał żadnych działań na sieci Base.</p>';
+                return;
+            }
+            throw new Error(response.data.result);
+        }
+
+        const transactions = response.data.result;
+        let htmlContent = `<h3>Ostatnie ${transactions.length} działań:</h3>`;
+
+        transactions.forEach((tx) => {
+            let type = "Interakcja z kontraktem";
+            let typeClass = "";
+            
+            if (tx.from.toLowerCase() === walletAddress.toLowerCase()) {
+                type = "WYCHODZĄCA (Wysłano / Wywołano)";
+                typeClass = "wychodzaca";
+            } else if (tx.to.toLowerCase() === walletAddress.toLowerCase()) {
+                type = "WCHODZĄCA (Otrzymano)";
+                typeClass = "wchodzaca";
+            }
+
+            const statusClass = tx.isError === "0" ? "sukces" : "blad";
+            const valueInETH = parseFloat(tx.value) / 1e18;
+            const txDate = new Date(tx.timeStamp * 1000).toLocaleString();
+
+            htmlContent += `
+                <div class="tx-card ${typeClass} ${statusClass}">
+                    <div class="tx-header">
+                        <span>${type}</span>
+                        <span>${txDate}</span>
+                    </div>
+                    <div class="tx-details">
+                        <span><strong>Wartość:</strong> ${valueInETH} ETH</span>
+                        <span><strong>Od:</strong> ${tx.from}</span>
+                        <span><strong>Do:</strong> ${tx.to || "Tworzenie kontraktu"}</span>
+                        <span><strong>Status:</strong> ${tx.isError === "0" ? "Sukces" : "BŁĄD"}</span>
+                        <span><strong>Hash:</strong> <a href="https://basescan.org{tx.hash}" target="_blank">${tx.hash}</a></span>
+                    </div>
+                </div>
+            `;
+        });
+
+        resultsDiv.innerHTML = htmlContent;
+
+    } catch (error) {
+        loadingDiv.style.display = 'none';
+        resultsDiv.innerHTML = `<p class="error-msg">Błąd: ${error.message}</p>`;
+    }
+}
+</script>
+
+</body>
+</html>
