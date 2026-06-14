@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Activity Checker v2 - No API Key</title>
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #0052FF; text-align: center; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #0052FF; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052FF; margin-top: 15px; }
+        #results { margin-top: 20px; }
+        .stats-box { background: #e6f0ff; border: 1px solid #b3d1ff; padding: 15px; border-radius: 6px; margin-bottom: 20px; text-align: center; font-size: 16px; }
+        .stats-box strong { color: #0052FF; font-size: 20px; }
+        .chart-container { position: relative; margin: 20px 0 30px 0; height: 300px; width: 100%; }
+        .tx-card { background: #f8f9fa; border-left: 5px solid #ccc; padding: 12px; margin-bottom: 10px; border-radius: 0 4px 4px 0; font-size: 13px; }
+        .tx-card.wychodzaca { border-left-color: #dc3545; }
+        .tx-card.wchodzaca { border-left-color: #28a745; }
+        .tx-card.sukces { background-color: #f1fcf4; }
+        .tx-card.blad { background-color: #fff5f5; border-left-color: #ff0000; }
+        .tx-header { font-weight: bold; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .tx-details span { display: block; margin-top: 2px; word-break: break-all; }
+        .error-msg { color: #dc3545; font-weight: bold; text-align: center; margin-top: 15px; }
+        h3 { margin-top: 25px; color: #333; border-bottom: 2px solid #0052FF; padding-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity Checker</h1>
+    <p class="subtitle">Sprawdź aktywność adresu bezpośrednio przez RPC (Bez API Key)</p>
+
+    <div class="form-group">
+        <label for="addressInput">Adres portfela (0x...):</label>
+        <input type="text" id="addressInput" placeholder="Wpisz adres Ethereum / Base">
+    </div>
+
+    <button id="checkBtn">Sprawdź aktywność</button>
+
+    <div id="loading">Pobieranie bezpośrednio z węzła Base RPC...</div>
+    <div id="results"></div>
+</div>
+
+<script>
+    // Korzystamy z darmowego publicznego endpointu RPC dla Base
+    const RPC_URL = 'https://base.org';
+    // Do pobrania historii bez API używamy darmowego, otwartego indeksatora Blockscout dla Base
+    const INDEXER_URL = 'https://blockscout.com';
+    
+    let activityChart = null;
+
+    document.getElementById('checkBtn').addEventListener('click', async () => {
+        const address = document.getElementById('addressInput').value.trim().toLowerCase();
+        const resultsDiv = document.getElementById('results');
+        const loadingDiv = document.getElementById('loading');
+
+        if (!address.startsWith('0x') || address.length !== 42) {
+            resultsDiv.innerHTML = '<div class="error-msg">Błąd: Podaj poprawny adres portfela (42 znaki).</div>';
+            return;
+        }
+
+        resultsDiv.innerHTML = '';
+        loadingDiv.style.display = 'block';
+
+        try {
+            // 1. POBIERANIE ŁĄCZNEJ LICZBY TRANSAKCJI (Przez czyste RPC)
+            const rpcResponse = await fetch(RPC_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'eth_getTransactionCount',
+                    params: [address, 'latest'],
+                    id: 1
+                })
+            });
+            const rpcData = await rpcResponse.json();
+            // Przeliczenie z systemu szesnastkowego (Hex) na dziesiętny
+            const totalTxCount = parseInt(rpcData.result, 16);
+
+            // 2. POBIERANIE HISTORII TRANSAKCJI (Przez darmowy, otwarty indeksator Blockscout)
+            const historyResponse = await fetch(`${INDEXER_URL}/addresses/${address}/transactions?filter=to%20%7C%20from`);
+            const historyData = await historyResponse.json();
+
+            loadingDiv.style.display = 'none';
+
+            if (!historyData.items || historyData.items.length === 0) {
+                resultsDiv.innerHTML = `<div class="stats-box">Wychodzące transakcje (Nonce): <strong>${totalTxCount}</strong></div><p style="text-align:center;">Brak historii transakcji w indeksatorze dla tego adresu.</p>`;
+                return;
+            }
+
+            // Blockscout domyślnie zwraca od najnowszych. Kopiujemy i odwracamy, by znaleźć najstarszą.
+            const transactions = [...historyData.items].reverse();
+            const firstTx = transactions[0];
+
+            // --- WYKRES AKTYWNOŚCI ---
+            const monthlyCounts = {};
+            transactions.forEach(tx => {
+                const date = new Date(tx.timestamp);
+                const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                monthlyCounts[yearMonth] = (monthlyCounts[yearMonth] || 0) + 1;
+            });
+
+            const sortedMonths = Object.keys(monthlyCounts).sort();
+            const chartLabels = sortedMonths;
+            const chartData = sortedMonths.map(month => monthlyCounts[month]);
+
+            // --- STRUKTURA WYŚWIETLANIA ---
+            resultsDiv.innerHTML = `
+                <div class="stats-box">
+                    Wszystkie transakcje wychodzące (Nonce): <strong>${totalTxCount}</strong>
+                </div>
+                
+                <h3>Wykres aktywności w czasie</h3>
+                <div class="chart-container">
+                    <canvas id="activityChartCanvas"></canvas>
+                </div>
+
+                <h3>Pierwsza zarejestrowana transakcja</h3>
+                <div id="firstTxContainer"></div>
+            `;
+
+            // --- RYSOWANIE WYKRESU ---
+            const ctx = document.getElementById('activityChartCanvas').getContext('2d');
+            if (activityChart) activityChart.destroy();
+
+            activityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Liczba transakcji / miesiąc',
+                        data: chartData,
+                        borderColor: '#0052FF',
+                        backgroundColor: 'rgba(0, 82, 255, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                }
+            });
+
+            // --- PARSOWANIE PIERWSZEJ TRANSAKCJI ---
+            const txType = firstTx.from.hash.toLowerCase() === address ? 'wychodzaca' : 'wchodzaca';
+            const txStatus = firstTx.status === 'ok' ? 'sukces' : 'blad';
+            // Wartość w Blockscout jest podawana w Wei, przeliczamy na ETH
+            const ethValue = (parseInt(firstTx.value) / 1e18).toFixed(6);
+            const txDate = new Date(firstTx.timestamp).toLocaleString('pl-PL');
+            const methodName = firstTx.method || (txType === 'wychodzaca' ? 'Wywołanie' : 'Transfer');
+
+            document.getElementById('firstTxContainer').innerHTML = `
+                <div class="tx-card ${txType} ${txStatus}">
+                    <div class="tx-header">
+                        <span>Metoda: ${methodName}</span>
+                        <span>${ethValue} ETH</span>
+                    </div>
+                    <div class="tx-details">
+                        <span><strong>Data:</strong> ${txDate}</span>
+                        <span><strong>Hash:</strong> ${firstTx.hash}</span>
+                        <span><strong>Od:</strong> ${firstTx.from.hash}</span>
+                        <span><strong>Do:</strong> ${firstTx.to ? firstTx.to.hash : 'Kontrakt utworzony'}</span>
+                        <span><strong>Typ:</strong> ${txType === 'wychodzaca' ? 'Wychodząca' : 'Wchodząca'}</span>
+                        <span><strong>Status:</strong> ${txStatus === 'sukces' ? 'Sukces' : 'Błąd / Odrzucona'}</span>
+                        <span><strong>Blok:</strong> ${firstTx.block}</span>
+                    </div>
+                </div>
+            `;
+
+        } catch (error) {
+            loadingDiv.style.display = 'none';
+            resultsDiv.innerHTML = '<div class="error-msg">Wystąpił błąd podczas odpytywania sieci Base. Spróbuj ponownie.</div>';
+            console.error(error);
+        }
+    });
+</script>
+
+</body>
+</html>
