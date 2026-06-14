@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Activity Checker v2 - Stable</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #0052FF; text-align: center; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #0052FF; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052FF; margin-top: 15px; }
+        #results { margin-top: 20px; }
+        .stats-box { background: #e6f0ff; border: 1px solid #b3d1ff; padding: 15px; border-radius: 6px; margin-bottom: 20px; text-align: center; font-size: 16px; }
+        .stats-box strong { color: #0052FF; font-size: 20px; }
+        .tx-card { background: #f8f9fa; border-left: 5px solid #ccc; padding: 12px; margin-bottom: 10px; border-radius: 0 4px 4px 0; font-size: 13px; }
+        .tx-card.wychodzaca { border-left-color: #dc3545; }
+        .tx-card.wchodzaca { border-left-color: #28a745; }
+        .tx-card.sukces { background-color: #f1fcf4; }
+        .tx-card.blad { background-color: #fff5f5; border-left-color: #ff0000; }
+        .tx-header { font-weight: bold; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .tx-details span { display: block; margin-top: 2px; word-break: break-all; }
+        .error-msg { color: #dc3545; font-weight: bold; text-align: center; margin-top: 15px; }
+        h3 { margin-top: 20px; color: #333; border-bottom: 2px solid #0052FF; padding-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity Checker</h1>
+    <p class="subtitle">Sprawdź aktywność adresu w sieci Base L2</p>
+
+    <div class="form-group">
+        <label for="addressInput">Adres portfela (0x...):</label>
+        <input type="text" id="addressInput" placeholder="Wpisz adres Ethereum / Base">
+    </div>
+
+    <button id="checkBtn">Sprawdź aktywność</button>
+
+    <div id="loading">Pobieranie danych z sieci Base...</div>
+    <div id="results"></div>
+</div>
+
+<script>
+    // Wklej tutaj swój darmowy klucz z https://basescan.org
+    const BASESCAN_API_KEY = 'TWÓJ_KLUCZ_API_BASESCAN'; 
+
+    document.getElementById('checkBtn').addEventListener('click', async () => {
+        const address = document.getElementById('addressInput').value.trim().toLowerCase();
+        const resultsDiv = document.getElementById('results');
+        const loadingDiv = document.getElementById('loading');
+
+        // Walidacja adresu EVM
+        if (!address.startsWith('0x') || address.length !== 42) {
+            resultsDiv.innerHTML = '<div class="error-msg">Błąd: Podaj poprawny adres portfela (42 znaki, zaczynający się od 0x).</div>';
+            return;
+        }
+
+        resultsDiv.innerHTML = '';
+        loadingDiv.style.display = 'block';
+
+        try {
+            // Pobieranie listy normalnych transakcji (od najstarszych: sort=asc)
+            const apiUrl = `https://basescan.org{address}&startblock=0&endblock=99999999&page=1&offset=10000&sort=asc&apikey=${BASESCAN_API_KEY}`;
+            
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+
+            loadingDiv.style.display = 'none';
+
+            if (data.status !== '1' || !data.result || data.result.length === 0) {
+                resultsDiv.innerHTML = '<div class="stats-box">Ilość transakcji: <strong>0</strong></div><p style="text-align:center;">Brak transakcji dla tego adresu w sieci Base.</p>';
+                return;
+            }
+
+            const transactions = data.result;
+            const totalTxCount = transactions.length;
+            const firstTx = transactions[0]; // Pierwsza transakcja (dzięki sort=asc)
+
+            // Wybór klas CSS na podstawie danych z blockchainu
+            const txType = firstTx.from.toLowerCase() === address ? 'wychodzaca' : 'wchodzaca';
+            const txStatus = firstTx.isError === '0' ? 'sukces' : 'blad';
+            
+            // Przeliczenie wartości z Wei na ETH ($1 ETH = 10^18 Wei$)
+            const ethValue = (parseInt(firstTx.value) / 1e18).toFixed(6);
+            
+            // Formatowanie daty bloku
+            const txDate = new Date(parseInt(firstTx.timeStamp) * 1000).toLocaleString('pl-PL');
+
+            // Renderowanie wyników na stronie
+            resultsDiv.innerHTML = `
+                <div class="stats-box">
+                    Łączna ilość transakcji (Base): <strong>${totalTxCount}</strong>
+                </div>
+                
+                <h3>Pierwsza transakcja na sieci Base</h3>
+                <div class="tx-card ${txType} ${txStatus}">
+                    <div class="tx-header">
+                        <span>Metoda: ${firstTx.functionName ? firstTx.functionName.split('(')[0] : 'Transfer'}</span>
+                        <span>${ethValue} ETH</span>
+                    </div>
+                    <div class="tx-details">
+                        <span><strong>Data:</strong> ${txDate}</span>
+                        <span><strong>Hash:</strong> ${firstTx.hash}</span>
+                        <span><strong>Od:</strong> ${firstTx.from}</span>
+                        <span><strong>Do:</strong> ${firstTx.to}</span>
+                        <span><strong>Typ:</strong> ${txType === 'wychodzaca' ? 'Wychodząca' : 'Wchodząca'}</span>
+                        <span><strong>Status:</strong> ${txStatus === 'sukces' ? 'Sukces' : 'Błąd (Failed)'}</span>
+                        <span><strong>Numer bloku:</strong> ${firstTx.blockNumber}</span>
+                    </div>
+                </div>
+            `;
+
+        } catch (error) {
+            loadingDiv.style.display = 'none';
+            resultsDiv.innerHTML = '<div class="error-msg">Wystąpił błąd sieciowy podczas pobierania danych. Spróbuj ponownie.</div>';
+            console.error(error);
+        }
+    });
+</script>
+
+</body>
+</html>
