@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>base activity checker v2 - all tx</title>
+    <style>
+        body { font-family: arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #0052ff; text-align: center; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { width: 100%; padding: 12px; background-color: #0052ff; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052ff; margin-top: 15px; }
+        #results { margin-top: 20px; }
+        .stats-box { background: #e6f0ff; border: 1px solid #b3d1ff; padding: 15px; border-radius: 6px; margin-bottom: 20px; text-align: center; font-size: 15px; line-height: 1.6; }
+        .stats-box strong { color: #0052ff; font-size: 18px; }
+        .stats-box .gas-highlight { color: #dc3545; font-size: 18px; }
+        .tx-card { background: #f8f9fa; border-left: 5px solid #ccc; padding: 12px; margin-bottom: 10px; border-radius: 0 4px 4px 0; font-size: 13px; }
+        .tx-card.wychodzaca { border-left-color: #dc3545; }
+        .tx-card.wchodzaca { border-left-color: #28a745; }
+        .tx-card.sukces { background-color: #f1fcf4; }
+        .tx-card.blad { background-color: #fff5f5; border-left-color: #ff0000; }
+        .tx-header { font-weight: bold; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .tx-details { color: #555; }
+        .tx-link { color: #0052ff; text-decoration: none; }
+        .tx-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity Checker v2</h1>
+    <p class="subtitle">Sprawdź historię transakcji i wydany gas na sieci Base</p>
+    
+    <div class="form-group">
+        <label for="addressInput">Adres portfela (0x...):</label>
+        <input type="text" id="addressInput" placeholder="Wklej adres portfela Ethereum / Base">
+    </div>
+    
+    <button id="checkBtn">Sprawdź aktywność</button>
+    
+    <div id="loading">Pobieranie danych z blockchainu...</div>
+    <div id="results"></div>
+</div>
+
+<script>
+document.getElementById('checkBtn').addEventListener('click', async () => {
+    const address = document.getElementById('addressInput').value.trim().toLowerCase();
+    const resultsDiv = document.getElementById('results');
+    const loadingDiv = document.getElementById('loading');
+    
+    if (!address.startsWith('0x') || address.length !== 42) {
+        alert('Wprowadź poprawny adres portfela EVM (42 znaki, zaczynający się od 0x).');
+        return;
+    }
+
+    loadingDiv.style.display = 'block';
+    resultsDiv.innerHTML = '';
+
+    try {
+        // Korzystamy z darmowego publicznego API Blockscout dla sieci Base
+        const apiUrl = `https://blockscout.com{address}/transactions`;
+        const response = await fetch(apiUrl);
+        
+        if (!response.ok) throw new Error('Błąd pobierania danych');
+        
+        const data = await response.json();
+        const txs = data.items || [];
+
+        if (txs.length === 0) {
+            resultsDiv.innerHTML = '<p style="text-align:center;">Brak transakcji dla tego adresu.</p>';
+            loadingDiv.style.display = 'none';
+            return;
+        }
+
+        let totalGasSpentETH = 0;
+        let outgoingCount = 0;
+        let incomingCount = 0;
+        let txCardsHtml = '';
+
+        txs.forEach(tx => {
+            const isOutgoing = tx.from && tx.from.hash.toLowerCase() === address;
+            const isSuccess = tx.status === 'ok';
+            
+            // Obliczanie zużytego gasu (Blockscout podaje wartość w Wei jako string)
+            let gasCostETH = 0;
+            if (tx.fee && tx.fee.value) {
+                gasCostETH = parseFloat(tx.fee.value) / 10**18;
+            }
+
+            if (isOutgoing) {
+                totalGasSpentETH += gasCostETH;
+                outgoingCount++;
+            } else {
+                incomingCount++;
+            }
+
+            const txTypeClass = isOutgoing ? 'wychodzaca' : 'wchodzaca';
+            const txStatusClass = isSuccess ? 'sukces' : 'blad';
+            const txDirectionText = isOutgoing ? 'WYCHODZĄCA (OUT)' : 'WCHODZĄCA (IN)';
+            const formattedValue = tx.value ? (parseFloat(tx.value) / 10**18).toFixed(6) : '0';
+            const shortHash = tx.hash.substring(0, 10) + '...' + tx.hash.substring(tx.hash.length - 8);
+            const date = new Date(tx.timestamp).toLocaleString('pl-PL');
+
+            txCardsHtml += `
+                <div class="tx-card ${txTypeClass} ${txStatusClass}">
+                    <div class="tx-header">
+                        <span>${txDirectionText} [${isSuccess ? 'SUKCES' : 'BŁĄD'}]</span>
+                        <span>${date}</span>
+                    </div>
+                    <div class="tx-details">
+                        <strong>Hash:</strong> <a class="tx-link" href="https://basescan.org{tx.hash}" target="_blank">${shortHash}</a><br>
+                        <strong>Wartość:</strong> ${formattedValue} ETH<br>
+                        <strong>Opłata za gas:</strong> ${gasCostETH.toFixed(8)} ETH<br>
+                        <strong>Od:</strong> ${tx.from ? tx.from.hash : 'Ukryty'}<br>
+                        <strong>Do:</strong> ${tx.to ? tx.to.hash : 'Tworzenie kontraktu'}
+                    </div>
+                </div>
+            `;
+        });
+
+        // Tworzenie podsumowania statystyk
+        const statsHtml = `
+            <div class="stats-box">
+                Łącznie znalezionych transakcji: <strong>${txs.length}</strong><br>
+                Transakcje wychodzące: <strong>${outgoingCount}</strong> | Wchodzące: <strong>${incomingCount}</strong><br>
+                Suma wydanego gasu (tylko OUT): <span class="gas-highlight"><strong>${totalGasSpentETH.toFixed(6)} ETH</strong></span>
+            </div>
+        `;
+
+        resultsDiv.innerHTML = statsHtml + txCardsHtml;
+
+    } catch (error) {
+        console.error(error);
+        resultsDiv.innerHTML = '<p style="text-align:center; color:red;">Wystąpił błąd podczas ładowania danych. Spróbuj ponownie później.</p>';
+    } finally {
+        loadingDiv.style.display = 'none';
+    }
+});
+</script>
+
+</body>
+</html>
