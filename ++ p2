@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="pl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Activity Checker v3 - Pro Dashboard</title>
+    <!-- Dołączenie biblioteki do wykresów -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: 'Segoe UI', arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h1 { color: #0052ff; text-align: center; margin-bottom: 5px; font-weight: 800; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; margin-bottom: 25px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #444; }
+        input[type="text"] { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 6px; box-sizing: border-box; font-size: 14px; transition: border 0.2s; }
+        input[type="text"]:focus { border-color: #0052ff; outline: none; }
+        button { width: 100%; padding: 14px; background-color: #0052ff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052ff; margin-top: 20px; }
+        #results { margin-top: 25px; }
+        
+        /* Flexbox dla statystyk i wykresu */
+        .dashboard-grid { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px; }
+        .stats-box { flex: 1; min-width: 250px; background: #e6f0ff; border: 1px solid #b3d1ff; padding: 20px; border-radius: 8px; font-size: 14px; line-height: 1.8; }
+        .stats-box strong { color: #0052ff; font-size: 16px; }
+        .stats-box .gas-highlight { color: #dc3545; font-size: 18px; font-weight: bold; }
+        .chart-container { flex: 1; min-width: 250px; max-height: 180px; display: flex; justify-content: center; }
+
+        /* Filtry */
+        .filter-container { display: flex; gap: 10px; margin-bottom: 15px; overflow-x: auto; padding-bottom: 5px; }
+        .filter-btn { background: #eee; border: none; padding: 6px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .filter-btn.active { background: #0052ff; color: white; }
+
+        /* Karty transakcji */
+        .tx-card { background: #f8f9fa; border-left: 5px solid #ccc; padding: 15px; margin-bottom: 12px; border-radius: 0 8px 8px 0; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .tx-card.wychodzaca { border-left-color: #dc3545; }
+        .tx-card.wchodzaca { border-left-color: #28a745; }
+        .tx-card.sukces { background-color: #f1fcf4; }
+        .tx-card.blad { background-color: #fff5f5; border-left-color: #ff0000; }
+        .tx-header { font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; }
+        .tx-details { color: #555; line-height: 1.5; }
+        .tx-link { color: #0052ff; text-decoration: none; font-weight: bold; }
+        .tx-link:hover { text-decoration: underline; }
+        .usd-val { color: #666; font-size: 11px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity Checker v3</h1>
+    <p class="subtitle">Analiza portfela, wykresy, koszty gasu oraz kursy USD na żywo</p>
+    
+    <div class="form-group">
+        <label for="addressInput">Adres portfela (0x...):</label>
+        <input type="text" id="addressInput" placeholder="Wklej adres portfela Ethereum / Base">
+    </div>
+    
+    <button id="checkBtn">Sprawdź aktywność</button>
+    
+    <div id="loading">Pobieranie danych z blockchainu i rynków...</div>
+    
+    <div id="results">
+        <!-- Tutaj trafi zawartość generowana przez JS -->
+    </div>
+</div>
+
+<script>
+let ethPriceUsd = 0;
+let currentChart = null;
+
+// Pobieranie aktualnego kursu ETH z darmowego API CoinGecko przy starcie aplikacji
+async function fetchEthPrice() {
+    try {
+        const res = await fetch('https://coingecko.com');
+        const data = await res.json();
+        ethPriceUsd = data.ethereum.usd;
+    } catch (e) {
+        console.error("Nie udało się pobrać kursu ETH, wartości USD będą niedostępne.", e);
+    }
+}
+fetchEthPrice();
+
+document.getElementById('checkBtn').addEventListener('click', async () => {
+    const address = document.getElementById('addressInput').value.trim().toLowerCase();
+    const resultsDiv = document.getElementById('results');
+    const loadingDiv = document.getElementById('loading');
+    
+    if (!address.startsWith('0x') || address.length !== 42) {
+        alert('Wprowadź poprawny adres portfela EVM (0x...).');
+        return;
+    }
+
+    loadingDiv.style.display = 'block';
+    resultsDiv.innerHTML = '';
+    if(currentChart) currentChart.destroy();
+
+    try {
+        const apiUrl = `https://blockscout.com{address}/transactions`;
+        const response = await fetch(apiUrl);
+        if (!response.ok) throw new Error('Błąd API');
+        
+        const data = await response.json();
+        const txs = data.items || [];
+
+        if (txs.length === 0) {
+            resultsDiv.innerHTML = '<p style="text-align:center;">Brak transakcji.</p>';
+            return;
+        }
+
+        let totalGasSpentETH = 0;
+        let outgoingCount = 0;
+        let incomingCount = 0;
+        let successCount = 0;
+        let failCount = 0;
+
+        // Renderowanie filtrów
+        resultsDiv.innerHTML = `
+            <div class="dashboard-grid">
+                <div class="stats-box" id="statsBoxContent"></div>
+                <div class="chart-container"><canvas id="activityChart"></canvas></div>
+            </div>
+            <div class="filter-container">
+                <button class="filter-btn active" onclick="filterTx('all')">Wszystkie</button>
+                <button class="filter-btn" onclick="filterTx('wychodzaca')">Wychodzące</button>
+                <button class="filter-btn" onclick="filterTx('wchodzaca')">Wchodzące</button>
+                <button class="filter-btn" onclick="filterTx('blad')">Błędy</button>
+            </div>
+            <div id="txList"></div>
+        `;
+
+        const txListDiv = document.getElementById('txList');
+
+        txs.forEach(tx => {
+            const isOutgoing = tx.from && tx.from.hash.toLowerCase() === address;
+            const isSuccess = tx.status === 'ok';
+            
+            isSuccess ? successCount++ : failCount++;
+            isOutgoing ? outgoingCount++ : incomingCount++;
+
+            let gasCostETH = tx.fee && tx.fee.value ? parseFloat(tx.fee.value) / 10**18 : 0;
+            if (isOutgoing) totalGasSpentETH += gasCostETH;
+
+            const txTypeClass = isOutgoing ? 'wychodzaca' : 'wchodzaca';
+            const txStatusClass = isSuccess ? 'sukces' : 'blad';
+            const txDirectionText = isOutgoing ? 'WYCHODZĄCA (OUT)' : 'WCHODZĄCA (IN)';
+            
+            const valueEth = tx.value ? parseFloat(tx.value) / 10**18 : 0;
+            const shortHash = tx.hash.substring(0, 10) + '...' + tx.hash.substring(tx.hash.length - 8);
+            const date = new Date(tx.timestamp).toLocaleString('pl-PL');
+
+            // Wyliczanie wartości w USD na bazie kursu live
+            const valUsdText = ethPriceUsd ? ` <span class="usd-val">(~$${(valueEth * ethPriceUsd).toFixed(2)})</span>` : '';
+            const gasUsdText = ethPriceUsd ? ` <span class="usd-val">(~$${(gasCostETH * ethPriceUsd).toFixed(4)})</span>` : '';
+
+            const card = document.createElement('div');
+            card.className = `tx-card ${txTypeClass} ${txStatusClass}`;
+            card.dataset.type = txTypeClass;
+            card.dataset.status = txStatusClass;
+            
+            card.innerHTML = `
+                <div class="tx-header">
+                    <span>${txDirectionText} [${isSuccess ? 'SUKCES' : 'BŁĄD'}]</span>
+                    <span>${date}</span>
+                </div>
+                <div class="tx-details">
+                    <strong>Hash:</strong> <a class="tx-link" href="https://basescan.org{tx.hash}" target="_blank">${shortHash}</a><br>
+                    <strong>Wartość:</strong> ${valueEth.toFixed(6)} ETH${valUsdText}<br>
+                    <strong>Opłata za gas:</strong> ${gasCostETH.toFixed(8)} ETH${gasUsdText}<br>
+                    <strong>Od:</strong> ${tx.from ? tx.from.hash : 'Ukryty'}<br>
+                    <strong>Do:</strong> ${tx.to ? tx.to.hash : 'Tworzenie kontraktu'}
+                </div>
+            `;
+            txListDiv.appendChild(card);
+        });
+
+        // Wypełnienie panelu statystyk
+        const totalGasUsd = ethPriceUsd ? ` (~$${(totalGasSpentETH * ethPriceUsd).toFixed(2)})` : '';
+        document.getElementById('statsBoxContent').innerHTML = `
+            Kurs sieciowy: <strong>1 ETH = $${ethPriceUsd || 'Brak danych'}</strong><br>
+            Wszystkich transakcji: <strong>${txs.length}</strong><br>
+            Kierunek: ⬆️ ${outgoingCount} OUT | ⬇️ ${incomingCount} IN<br>
+            Status: ✅ ${successCount} OK | ❌ ${failCount} Błędy<br>
+            Suma wydanego gasu: <span class="gas-highlight">${totalGasSpentETH.toFixed(6)} ETH</span>${totalGasUsd}
+        `;
+
+        // Generowanie wykresu kołowego
+        const ctx = document.getElementById('activityChart').getContext('2d');
+        currentChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Sukces', 'Błędy', 'Wychodzące', 'Wchodzące'],
+                datasets: [{
+                    data: [successCount, failCount, outgoingCount, incomingCount],
+                    backgroundColor: ['#28a745', '#dc3545', '#ffc107', '#007bff']
+                }]
+            },
