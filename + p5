@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="pl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Portfolio & Transaction Tracker v5 PRO</title>
+    <!-- Poprawiony link do biblioteki Chart.js -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: 'Segoe UI', arial, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 950px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h1 { color: #0052ff; text-align: center; margin-bottom: 5px; font-weight: 800; }
+        p.subtitle { text-align: center; color: #666; margin-top: 0; font-size: 14px; margin-bottom: 25px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #444; }
+        input[type="text"] { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 6px; box-sizing: border-box; font-size: 14px; transition: border 0.2s; }
+        input[type="text"]:focus { border-color: #0052ff; outline: none; }
+        button { width: 100%; padding: 14px; background-color: #0052ff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background-color: #003db3; }
+        #loading { display: none; text-align: center; font-weight: bold; color: #0052ff; margin-top: 20px; }
+        #results { margin-top: 25px; }
+        
+        /* Layout */
+        .dashboard-grid { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 25px; }
+        .stats-box { flex: 1.5; min-width: 280px; background: #e6f0ff; border: 1px solid #b3d1ff; padding: 20px; border-radius: 8px; font-size: 14px; line-height: 1.8; }
+        .stats-box strong { color: #0052ff; font-size: 16px; }
+        .stats-box .gas-highlight { color: #dc3545; font-size: 18px; font-weight: bold; }
+        .chart-container { flex: 1; min-width: 200px; max-height: 180px; display: flex; justify-content: center; }
+
+        /* Tokens */
+        .tokens-section { background: #f8f9fa; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px; margin-bottom: 25px; }
+        .tokens-section h3 { margin-top: 0; color: #333; border-bottom: 2px solid #0052ff; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .total-portfolio-value { font-size: 16px; color: #28a745; font-weight: bold; }
+        .token-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 15px; }
+        .token-item { background: white; border: 1px solid #eaeaea; padding: 12px; border-radius: 6px; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .token-info { display: flex; flex-direction: column; overflow: hidden; width: 100%; }
+        .token-name-row { display: flex; justify-content: space-between; width: 100%; }
+        .token-name { font-weight: bold; font-size: 13px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+        .token-price { font-size: 11px; color: #888; }
+        .token-balance-row { display: flex; justify-content: space-between; align-items: baseline; width: 100%; margin-top: 2px; }
+        .token-balance { font-size: 14px; color: #0052ff; font-weight: 600; }
+        .token-usd { font-size: 12px; color: #28a745; font-weight: bold; }
+
+        /* Controls */
+        .controls-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+        .filter-container { display: flex; gap: 8px; }
+        .filter-btn { background: #eee; border: none; padding: 6px 14px; border-radius: 20px; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .filter-btn.active { background: #0052ff; color: white; }
+        .export-btn { background-color: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        .export-btn:hover { background-color: #218838; }
+
+        /* Transactions */
+        .tx-card { background: #f8f9fa; border-left: 5px solid #ccc; padding: 15px; margin-bottom: 12px; border-radius: 0 8px 8px 0; font-size: 13px; }
+        .tx-card.wychodzaca { border-left-color: #dc3545; }
+        .tx-card.wchodzaca { border-left-color: #28a745; }
+        .tx-card.sukces { background-color: #f1fcf4; }
+        .tx-card.blad { background-color: #fff5f5; border-left-color: #ff0000; }
+        .tx-header { font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; }
+        .tx-details { color: #555; line-height: 1.5; }
+        .tx-link { color: #0052ff; text-decoration: none; font-weight: bold; }
+        .tx-link:hover { text-decoration: underline; }
+        .usd-val { color: #666; font-size: 11px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Base Activity & Portfolio PRO</h1>
+    <p class="subtitle">Statystyki sieciowe, aktualne ceny tokenów, wycena majątku live oraz eksport raportów</p>
+    
+    <div class="form-group">
+        <label for="addressInput">Adres portfela (0x...):</label>
+        <input type="text" id="addressInput" placeholder="Wklej adres portfela Ethereum / Base">
+    </div>
+    
+    <button id="checkBtn">Pobierz pełny raport portfela</button>
+    
+    <div id="loading">Analizowanie rynków i danych on-chain dla sieci Base...</div>
+    
+    <div id="results"></div>
+</div>
+
+<script>
+let ethPriceUsd = 0;
+let tokenPrices = {}; 
+let currentChart = null;
+let globalTxArray = []; 
+
+const TOKEN_GECKO_MAPPING = {
+    'USDC': { id: 'usd-coin', symbol: 'USDC' },
+    'DEGEN': { id: 'degen-base', symbol: 'DEGEN' },
+    'BRETT': { id: 'brett', symbol: 'BRETT' },
+    'AERO': { id: 'aerodrome-finance', symbol: 'AERO' },
+    'VIRTUAL': { id: 'virtual-protocol', symbol: 'VIRTUAL' },
+    'TOSHI': { id: 'toshi', symbol: 'TOSHI' },
+    'KEYCAT': { id: 'keyboard-cat', symbol: 'KEYCAT' },
+    'ANSEM': { id: 'ansem', symbol: 'ANSEM' }
+};
+
+async function fetchMarketPrices() {
+    try {
+        const ids = ['ethereum', ...Object.values(TOKEN_GECKO_MAPPING).map(t => t.id)].join(',');
+        // Poprawiony poprawny URL do otwartego API CoinGecko
+        const res = await fetch(`https://coingecko.com{ids}&vs_currencies=usd`);
+        const data = await res.json();
+        
+        ethPriceUsd = data.ethereum?.usd || 0;
+        
+        Object.keys(TOKEN_GECKO_MAPPING).forEach(symbol => {
+            const id = TOKEN_GECKO_MAPPING[symbol].id;
+            if (data[id]) {
+                tokenPrices[symbol] = data[id].usd;
+            }
+        });
+    } catch (e) {
+        console.error("Błąd podczas pobierania kursów giełdowych live.", e);
+    }
+}
+fetchMarketPrices();
+
+document.getElementById('checkBtn').addEventListener('click', async () => {
+    const address = document.getElementById('addressInput').value.trim().toLowerCase();
+    const resultsDiv = document.getElementById('results');
+    const loadingDiv = document.getElementById('loading');
+    
+    if (!address.startsWith('0x') || address.length !== 42) {
+        alert('Wprowadź prawidłowy adres portfela EVM (0x...).');
+        return;
+    }
+
+    loadingDiv.style.display = 'block';
+    resultsDiv.innerHTML = '';
+    globalTxArray = [];
+    if(currentChart) currentChart.destroy();
+
+    try {
+        // Poprawione zapytania do publicznego API Blockscout dla sieci Base
+        const txUrl = `https://blockscout.com{address}/transactions`;
+        const tokensUrl = `https://blockscout.com{address}/token-balances`;
+
+        const [txResponse, tokensResponse] = await Promise.all([fetch(txUrl), fetch(tokensUrl)]);
+        if (!txResponse.ok || !tokensResponse.ok) throw new Error('Błąd API Blockscout');
+
+        const txData = await txResponse.json();
+        const tokensData = await tokensResponse.json();
+
+        globalTxArray = txData.items || [];
+
+        // 1. Przetwarzanie i obliczanie wartości portfolio
+        let totalUsdValue = 0;
+        let tokenItemsHtml = '';
+        let chartLabels = [];
+        let chartData = [];
+
+        // Dodanie natywnego ETH, jeśli Blockscout zwraca balans w strukturze adresu portfela
+        // W przeciwnym razie parsowanie tokenów ERC-20
+        tokensData.forEach(item => {
+            const symbol = item.token?.symbol || 'UNKNOWN';
+            const decimals = parseInt(item.token?.decimals || 18);
+            const rawBalance = item.value || "0";
+            const balance = parseFloat(rawBalance) / Math.pow(10, decimals);
+            
+            if (balance > 0) {
+                // Szukanie ceny w mapowaniu CoinGecko lub pobranie z Blockscout, jeśli jest dostępna
+                let price = tokenPrices[symbol] || parseFloat(item.token?.exchange_rate || 0);
+                if (symbol === 'WETH' || symbol === 'ETH') price = ethPriceUsd;
+                
+                const usdValue = balance * price;
+                totalUsdValue += usdValue;
+
+                if (usdValue > 0.01 || balance > 0) {
+                    tokenItemsHtml += `
+                        <div class="token-item">
+                            <div class="token-info">
+                                <div class="token-name-row">
+                                    <span class="token-name">${symbol}</span>
+                                    <span class="token-price">$${price.toFixed(4)}</span>
+                                </div>
+                                <div class="token-balance-row">
+                                    <span class="token-balance">${balance.toLocaleString(undefined, {maximumFractionDigits: 4})}</span>
